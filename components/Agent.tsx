@@ -21,6 +21,22 @@ interface SavedMessage {
   content: string;
 }
 
+interface VapiMessage {
+  type: string;
+  role: "user" | "assistant" | "system";
+  transcript?: string;
+  transcriptType?: "final" | "partial";
+}
+
+interface AgentProps {
+  userName: string;
+  userId: string;
+  interviewId?: string;
+  feedbackId?: string;
+  type: "generate" | "interview";
+  questions?: string[];
+}
+
 const Agent = ({
   userName,
   userId,
@@ -44,9 +60,12 @@ const Agent = ({
       setCallStatus(CallStatus.FINISHED);
     };
 
-    const onMessage = (message: Message) => {
+    const onMessage = (message: VapiMessage) => {
       if (message.type === "transcript" && message.transcriptType === "final") {
-        const newMessage = { role: message.role, content: message.transcript };
+        const newMessage = {
+          role: message.role,
+          content: message.transcript || "",
+        };
         setMessages((prev) => [...prev, newMessage]);
       }
     };
@@ -117,26 +136,31 @@ const Agent = ({
   const handleCall = async () => {
     setCallStatus(CallStatus.CONNECTING);
 
-    if (type === "generate") {
-      await vapi.start(process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID!, {
-        variableValues: {
-          username: userName,
-          userid: userId,
-        },
-      });
-    } else {
-      let formattedQuestions = "";
-      if (questions) {
-        formattedQuestions = questions
-          .map((question) => `- ${question}`)
-          .join("\n");
-      }
+    try {
+      if (type === "generate") {
+        await vapi.start(process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID!, {
+          variableValues: {
+            username: userName,
+            userid: userId,
+          },
+        });
+      } else {
+        let formattedQuestions = "";
+        if (questions) {
+          formattedQuestions = questions
+            .map((question) => `- ${question}`)
+            .join("\n");
+        }
 
-      await vapi.start(interviewer, {
-        variableValues: {
-          questions: formattedQuestions,
-        },
-      });
+        await vapi.start(interviewer, {
+          variableValues: {
+            questions: formattedQuestions,
+          },
+        });
+      }
+    } catch (err) {
+      console.error("Vapi start error:", err);
+      setCallStatus(CallStatus.FINISHED);
     }
   };
 
@@ -169,8 +193,8 @@ const Agent = ({
             <Image
               src="/user-avatar.png"
               alt="profile-image"
-              width={539}
-              height={539}
+              width={120}
+              height={120}
               className="rounded-full object-cover size-[120px]"
             />
             <h3>{userName}</h3>
@@ -196,14 +220,13 @@ const Agent = ({
 
       <div className="w-full flex justify-center">
         {callStatus !== "ACTIVE" ? (
-          <button className="relative btn-call" onClick={() => handleCall()}>
+          <button className="relative btn-call" onClick={handleCall}>
             <span
               className={cn(
                 "absolute animate-ping rounded-full opacity-75",
                 callStatus !== "CONNECTING" && "hidden"
               )}
             />
-
             <span className="relative">
               {callStatus === "INACTIVE" || callStatus === "FINISHED"
                 ? "Call"
@@ -211,7 +234,7 @@ const Agent = ({
             </span>
           </button>
         ) : (
-          <button className="btn-disconnect" onClick={() => handleDisconnect()}>
+          <button className="btn-disconnect" onClick={handleDisconnect}>
             End
           </button>
         )}
