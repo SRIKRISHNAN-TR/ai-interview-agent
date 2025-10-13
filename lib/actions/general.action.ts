@@ -4,6 +4,7 @@ import { generateObject } from "ai";
 import { google } from "@ai-sdk/google";
 import { db } from "@/firebase/admin";
 import { feedbackSchema } from "@/constants";
+import type { Timestamp } from "firebase-admin/firestore";
 
 type CreateFeedbackParams = {
   interviewId: string;
@@ -26,7 +27,7 @@ type Interview = {
   id: string;
   userId: string;
   finalized: boolean;
-  createdAt: string;
+  createdAt?: string | Timestamp;
   // ... other interview fields
 };
 
@@ -35,7 +36,11 @@ type Feedback = {
   interviewId: string;
   userId: string;
   totalScore: number;
-  // ... other feedback fields
+  categoryScores?: any;
+  strengths?: string;
+  areasForImprovement?: string;
+  finalAssessment?: string;
+  createdAt?: string | Timestamp;
 };
 
 // -------------------- Feedback Creation --------------------
@@ -44,15 +49,11 @@ export async function createFeedback(params: CreateFeedbackParams) {
 
   try {
     const formattedTranscript = transcript
-      .map(
-        (sentence) => `- ${sentence.role}: ${sentence.content}\n`
-      )
+      .map((sentence) => `- ${sentence.role}: ${sentence.content}\n`)
       .join("");
 
     const { object } = await generateObject({
-      model: google("gemini-2.0-flash-001", {
-        structuredOutputs: false,
-      }),
+      model: google("gemini-2.0-flash-001", { structuredOutputs: false }),
       schema: feedbackSchema,
       prompt: `
         You are an AI interviewer analyzing a mock interview. Evaluate the candidate thoroughly.
@@ -65,8 +66,7 @@ export async function createFeedback(params: CreateFeedbackParams) {
         - Cultural & Role Fit
         - Confidence & Clarity
       `,
-      system:
-        "You are a professional interviewer analyzing a mock interview.",
+      system: "You are a professional interviewer analyzing a mock interview.",
     });
 
     const feedback = {
@@ -77,7 +77,7 @@ export async function createFeedback(params: CreateFeedbackParams) {
       strengths: object.strengths,
       areasForImprovement: object.areasForImprovement,
       finalAssessment: object.finalAssessment,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date(), // store as JS Date (can also use serverTimestamp)
     };
 
     const feedbackRef = feedbackId
@@ -98,7 +98,7 @@ export async function createFeedback(params: CreateFeedbackParams) {
 // Get a single interview by ID
 export async function getInterviewById(id: string): Promise<Interview | null> {
   const interviewDoc = await db.collection("interviews").doc(id).get();
-  return interviewDoc.exists ? (interviewDoc.data() as Interview) : null;
+  return interviewDoc.exists ? ({ id: interviewDoc.id, ...interviewDoc.data() } as Interview) : null;
 }
 
 // Get feedback by interview ID and user ID
@@ -107,60 +107,80 @@ export async function getFeedbackByInterviewId(
 ): Promise<Feedback | null> {
   const { interviewId, userId } = params;
 
-  const querySnapshot = await db
+  const snapshot = await db
     .collection("feedback")
     .where("interviewId", "==", interviewId)
     .where("userId", "==", userId)
     .limit(1)
     .get();
 
-  if (querySnapshot.empty) return null;
+  if (snapshot.empty) return null;
 
-  const feedbackDoc = querySnapshot.docs[0];
-  return { id: feedbackDoc.id, ...feedbackDoc.data() } as Feedback;
+  const doc = snapshot.docs[0];
+  return { id: doc.id, ...doc.data() } as Feedback;
 }
 
-// Get latest finalized interviews (excluding the current user) without composite index
+// Get latest finalized interviews (excluding the current user)
 export async function getLatestInterviews(
   params: GetLatestInterviewsParams
 ): Promise<Interview[] | null> {
   const { userId, limit = 20 } = params;
 
-  // Fetch all finalized interviews
   const snapshot = await db
     .collection("interviews")
     .where("finalized", "==", true)
     .get();
 
-  // Filter out current user's interviews and sort by createdAt descending
   const interviews = snapshot.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .map((doc) => ({ id: doc.id, ...doc.data() } as Interview))
     .filter((interview) => interview.userId !== userId)
     .sort((a, b) => {
-      const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt).getTime();
-      const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt).getTime();
+      const aTime = a.createdAt && "toMillis" in a.createdAt
+        ? a.createdAt.toMillis()
+        : a.createdAt
+        ? new Date(a.createdAt).getTime()
+        : 0;
+      const bTime = b.createdAt && "toMillis" in b.createdAt
+        ? b.createdAt.toMillis()
+        : b.createdAt
+        ? new Date(b.createdAt).getTime()
+        : 0;
       return bTime - aTime; // descending
     })
-    .slice(0, limit); // limit results
+    .slice(0, limit);
 
-  return interviews as Interview[];
+  return interviews;
 }
 
-// Get interviews by user ID without composite index
+// Get interviews by user ID
 export async function getInterviewsByUserId(userId: string): Promise<Interview[] | null> {
-  const snapshot = await db
-    .collection("interviews")
-    .where("userId", "==", userId)
-    .get();
+  const snapshot = await db.collection("interviews").where("userId", "==", userId).get();
 
-  // Sort by createdAt descending in JS
   const interviews = snapshot.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        userId: data.userId,
+        finalized: data.finalized,
+        createdAt: data.createdAt, // Timestamp or string
+      } as Interview;
+    })
     .sort((a, b) => {
-      const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt).getTime();
-      const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt).getTime();
-      return bTime - aTime; // descending
+      const aTime =
+        a.createdAt && "toMillis" in a.createdAt
+          ? a.createdAt.toMillis()
+          : a.createdAt
+          ? new Date(a.createdAt).getTime()
+          : 0;
+      const bTime =
+        b.createdAt && "toMillis" in b.createdAt
+          ? b.createdAt.toMillis()
+          : b.createdAt
+          ? new Date(b.createdAt).getTime()
+          : 0;
+      return bTime - aTime;
     });
 
-  return interviews as Interview[];
+  return interviews;
 }
