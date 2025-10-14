@@ -4,8 +4,8 @@ import { generateObject } from "ai";
 import { google } from "@ai-sdk/google";
 import { db } from "@/firebase/admin";
 import { feedbackSchema } from "@/constants";
-import type { Timestamp } from "firebase-admin/firestore";
 
+// -------------------- Types --------------------
 type CreateFeedbackParams = {
   interviewId: string;
   userId: string;
@@ -23,11 +23,16 @@ type GetLatestInterviewsParams = {
   limit?: number;
 };
 
+// Firestore Timestamp compatible type
+type FirestoreTimestamp = {
+  toMillis?: () => number;
+};
+
 type Interview = {
   id: string;
   userId: string;
   finalized: boolean;
-  createdAt?: string | Timestamp;
+  createdAt?: FirestoreTimestamp | string | null; // ✅ Optional and safe
   // ... other interview fields
 };
 
@@ -36,12 +41,32 @@ type Feedback = {
   interviewId: string;
   userId: string;
   totalScore: number;
-  categoryScores?: any;
-  strengths?: string;
-  areasForImprovement?: string;
-  finalAssessment?: string;
-  createdAt?: string | Timestamp;
+  // ... other feedback fields
 };
+
+// -------------------- Helper --------------------
+function getTimeValue(createdAt: any): number {
+  if (!createdAt) return 0;
+
+  // ✅ Firestore Timestamp
+  if (typeof createdAt === "object" && createdAt !== null && typeof createdAt.toMillis === "function") {
+    try {
+      return createdAt.toMillis();
+    } catch {
+      return 0;
+    }
+  }
+
+  // ✅ String or Date
+  if (typeof createdAt === "string" || createdAt instanceof Date) {
+    const t = new Date(createdAt).getTime();
+    return isNaN(t) ? 0 : t;
+  }
+
+  // ✅ Fallback
+  return 0;
+}
+
 
 // -------------------- Feedback Creation --------------------
 export async function createFeedback(params: CreateFeedbackParams) {
@@ -77,7 +102,7 @@ export async function createFeedback(params: CreateFeedbackParams) {
       strengths: object.strengths,
       areasForImprovement: object.areasForImprovement,
       finalAssessment: object.finalAssessment,
-      createdAt: new Date(), // store as JS Date (can also use serverTimestamp)
+      createdAt: new Date().toISOString(),
     };
 
     const feedbackRef = feedbackId
@@ -98,7 +123,10 @@ export async function createFeedback(params: CreateFeedbackParams) {
 // Get a single interview by ID
 export async function getInterviewById(id: string): Promise<Interview | null> {
   const interviewDoc = await db.collection("interviews").doc(id).get();
-  return interviewDoc.exists ? ({ id: interviewDoc.id, ...interviewDoc.data() } as Interview) : null;
+  if (!interviewDoc.exists) return null;
+
+  const data = interviewDoc.data() || {};
+  return { id: interviewDoc.id, ...(data as Omit<Interview, "id">) };
 }
 
 // Get feedback by interview ID and user ID
@@ -107,17 +135,17 @@ export async function getFeedbackByInterviewId(
 ): Promise<Feedback | null> {
   const { interviewId, userId } = params;
 
-  const snapshot = await db
+  const querySnapshot = await db
     .collection("feedback")
     .where("interviewId", "==", interviewId)
     .where("userId", "==", userId)
     .limit(1)
     .get();
 
-  if (snapshot.empty) return null;
+  if (querySnapshot.empty) return null;
 
-  const doc = snapshot.docs[0];
-  return { id: doc.id, ...doc.data() } as Feedback;
+  const feedbackDoc = querySnapshot.docs[0];
+  return { id: feedbackDoc.id, ...(feedbackDoc.data() as Omit<Feedback, "id">) };
 }
 
 // Get latest finalized interviews (excluding the current user)
@@ -132,21 +160,9 @@ export async function getLatestInterviews(
     .get();
 
   const interviews = snapshot.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() } as Interview))
+    .map((doc) => ({ id: doc.id, ...(doc.data() as Omit<Interview, "id">) }))
     .filter((interview) => interview.userId !== userId)
-    .sort((a, b) => {
-      const aTime = a.createdAt && "toMillis" in a.createdAt
-        ? a.createdAt.toMillis()
-        : a.createdAt
-        ? new Date(a.createdAt).getTime()
-        : 0;
-      const bTime = b.createdAt && "toMillis" in b.createdAt
-        ? b.createdAt.toMillis()
-        : b.createdAt
-        ? new Date(b.createdAt).getTime()
-        : 0;
-      return bTime - aTime; // descending
-    })
+    .sort((a, b) => getTimeValue(b.createdAt) - getTimeValue(a.createdAt))
     .slice(0, limit);
 
   return interviews;
@@ -157,30 +173,8 @@ export async function getInterviewsByUserId(userId: string): Promise<Interview[]
   const snapshot = await db.collection("interviews").where("userId", "==", userId).get();
 
   const interviews = snapshot.docs
-    .map((doc) => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        userId: data.userId,
-        finalized: data.finalized,
-        createdAt: data.createdAt, // Timestamp or string
-      } as Interview;
-    })
-    .sort((a, b) => {
-      const aTime =
-        a.createdAt && "toMillis" in a.createdAt
-          ? a.createdAt.toMillis()
-          : a.createdAt
-          ? new Date(a.createdAt).getTime()
-          : 0;
-      const bTime =
-        b.createdAt && "toMillis" in b.createdAt
-          ? b.createdAt.toMillis()
-          : b.createdAt
-          ? new Date(b.createdAt).getTime()
-          : 0;
-      return bTime - aTime;
-    });
+    .map((doc) => ({ id: doc.id, ...(doc.data() as Omit<Interview, "id">) }))
+    .sort((a, b) => getTimeValue(b.createdAt) - getTimeValue(a.createdAt));
 
   return interviews;
 }
