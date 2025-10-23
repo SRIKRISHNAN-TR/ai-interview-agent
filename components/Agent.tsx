@@ -37,7 +37,6 @@ const Agent = ({ userName, userId, interviewId, feedbackId, type, questions }: A
   const [lastMessage, setLastMessage] = useState<string>("");
   const [currentInterviewId, setCurrentInterviewId] = useState(interviewId);
 
-  // Track interview setup details
   const [setup, setSetup] = useState({
     role: "",
     type: "",
@@ -46,20 +45,17 @@ const Agent = ({ userName, userId, interviewId, feedbackId, type, questions }: A
     amount: 5,
   });
 
+  // --- Vapi event handlers ---
   useEffect(() => {
-    // --- Vapi Event Handlers ---
     const onCallStart = () => setCallStatus(CallStatus.ACTIVE);
     const onCallEnd = () => setCallStatus(CallStatus.FINISHED);
 
     const onMessage = (message: any) => {
       if (message.type === "transcript" && message.transcriptType === "final") {
-        const text = message.transcript.trim();
+        const text = message.transcript?.trim() || "";
         setMessages((prev) => [...prev, { role: message.role, content: text }]);
 
-        // Detect answers to setup questions
-        if (type === "generate" && message.role === "user") {
-          detectSetupAnswers(text);
-        }
+        if (type === "generate" && message.role === "user") detectSetupAnswers(text);
       }
     };
 
@@ -82,9 +78,9 @@ const Agent = ({ userName, userId, interviewId, feedbackId, type, questions }: A
       vapi.off("speech-end", onSpeechEnd);
       vapi.off("error", onError);
     };
-  }, []);
+  }, [type]);
 
-  // --- Extract setup answers dynamically ---
+  // --- Detect setup answers dynamically ---
   const detectSetupAnswers = (text: string) => {
     const lower = text.toLowerCase();
     const updates: Partial<typeof setup> = {};
@@ -92,43 +88,47 @@ const Agent = ({ userName, userId, interviewId, feedbackId, type, questions }: A
     if (lower.includes("developer") || lower.includes("engineer")) updates.role = text;
     if (lower.includes("technical") || lower.includes("hr")) updates.type = text;
     if (lower.includes("junior") || lower.includes("mid") || lower.includes("senior")) updates.level = text;
-
     if (lower.includes("react") || lower.includes("python") || lower.includes("java")) updates.techstack = text;
 
     const numberMatch = text.match(/\b\d+\b/);
-    if (numberMatch) updates.amount = parseInt(numberMatch[0]);
+    if (numberMatch) updates.amount = parseInt(numberMatch[0], 10);
 
-    if (Object.keys(updates).length > 0)
-      setSetup((prev) => ({ ...prev, ...updates }));
+    if (Object.keys(updates).length > 0) setSetup((prev) => ({ ...prev, ...updates }));
   };
 
+  // --- Handle feedback generation ---
   useEffect(() => {
-    // Generate feedback after interview ends
     if (messages.length > 0) setLastMessage(messages[messages.length - 1].content);
 
     const handleGenerateFeedback = async () => {
       if (!currentInterviewId) return;
-      const { success, feedbackId: id } = await createFeedback({
-        interviewId: currentInterviewId,
-        userId,
-        transcript: messages,
-        feedbackId,
-      });
 
-      if (success && id) router.push(`/interview/${currentInterviewId}/feedback`);
-      else router.push("/");
+      try {
+        const payload: any = {
+          interviewId: currentInterviewId,
+          userId,
+          transcript: messages || [],
+        };
+        if (feedbackId) payload.feedbackId = feedbackId;
+
+        const { success, feedbackId: id } = await createFeedback(payload);
+
+        if (success && id) router.push(`/interview/${currentInterviewId}/feedback`);
+        else router.push("/");
+      } catch (err) {
+        console.error("Error generating feedback:", err);
+      }
     };
 
     if (callStatus === CallStatus.FINISHED && type !== "generate") handleGenerateFeedback();
   }, [messages, callStatus, currentInterviewId, feedbackId, type, userId, router]);
 
-  // --- Core Call Handler ---
+  // --- Core call handler ---
   const handleCall = async () => {
     setCallStatus(CallStatus.CONNECTING);
 
     try {
       if (type === "generate") {
-        // Step 1: Start conversation for setup
         await vapi.start(interviewer, {
           variableValues: {
             questions: `
@@ -143,8 +143,7 @@ Hi ${userName}! Before we begin, could you tell me:
 
         setCallStatus(CallStatus.ACTIVE);
       } else {
-        // Step 2: Resume existing interview
-        const formattedQuestions = questions?.map((q) => `- ${q}`).join("\n") || "";
+        const formattedQuestions = (questions || []).map((q) => `- ${q}`).join("\n");
         await vapi.start(interviewer, { variableValues: { questions: formattedQuestions } });
         setCallStatus(CallStatus.ACTIVE);
       }
@@ -154,7 +153,7 @@ Hi ${userName}! Before we begin, could you tell me:
     }
   };
 
-  // --- Automatically fetch questions when setup is ready ---
+  // --- Auto-generate questions when setup complete ---
   useEffect(() => {
     const { role, type, level, techstack, amount } = setup;
     if (role && type && level && techstack && amount) {
@@ -175,14 +174,13 @@ Hi ${userName}! Before we begin, could you tell me:
       if (!data.success) throw new Error(data.error);
 
       const { interviewId, questions: generatedQuestions } = data;
+      if (!interviewId) throw new Error("No interviewId returned");
+
       setCurrentInterviewId(interviewId);
 
-      const formattedQuestions =
-        generatedQuestions?.map((q: string) => `- ${q}`).join("\n") || "";
+      const formattedQuestions = (generatedQuestions || []).map((q: string) => `- ${q}`).join("\n");
 
-      await vapi.start(interviewer, {
-        variableValues: { questions: formattedQuestions },
-      });
+      await vapi.start(interviewer, { variableValues: { questions: formattedQuestions } });
     } catch (error) {
       console.error("⚠ Error generating questions:", error);
     }
@@ -198,13 +196,7 @@ Hi ${userName}! Before we begin, could you tell me:
       <div className="call-view">
         <div className="card-interviewer">
           <div className="avatar">
-            <Image
-              src="/ai-avatar.png"
-              alt="profile-image"
-              width={65}
-              height={54}
-              className="object-cover"
-            />
+            <Image src="/ai-avatar.png" alt="profile-image" width={65} height={54} className="object-cover" />
             {isSpeaking && <span className="animate-speak" />}
           </div>
           <h3>AI Interviewer</h3>
@@ -227,13 +219,7 @@ Hi ${userName}! Before we begin, could you tell me:
       {messages.length > 0 && (
         <div className="transcript-border">
           <div className="transcript">
-            <p
-              key={lastMessage}
-              className={cn(
-                "transition-opacity duration-500 opacity-0",
-                "animate-fadeIn opacity-100"
-              )}
-            >
+            <p key={lastMessage} className={cn("transition-opacity duration-500 opacity-0", "animate-fadeIn opacity-100")}>
               {lastMessage}
             </p>
           </div>
@@ -242,21 +228,10 @@ Hi ${userName}! Before we begin, could you tell me:
 
       <div className="w-full flex justify-center gap-4">
         {callStatus !== CallStatus.ACTIVE ? (
-          <button
-            className="relative btn-call"
-            onClick={handleCall}
-            disabled={callStatus === CallStatus.CONNECTING}
-          >
-            <span
-              className={cn(
-                "absolute animate-ping rounded-full opacity-75",
-                callStatus !== CallStatus.CONNECTING && "hidden"
-              )}
-            />
+          <button className="relative btn-call" onClick={handleCall} disabled={callStatus === CallStatus.CONNECTING}>
+            <span className={cn("absolute animate-ping rounded-full opacity-75", callStatus !== CallStatus.CONNECTING && "hidden")} />
             <span className="relative">
-              {callStatus === CallStatus.INACTIVE || callStatus === CallStatus.FINISHED
-                ? "Start Interview"
-                : ". . . Connecting"}
+              {callStatus === CallStatus.INACTIVE || callStatus === CallStatus.FINISHED ? "Start Interview" : ". . . Connecting"}
             </span>
           </button>
         ) : (
@@ -276,19 +251,40 @@ Hi ${userName}! Before we begin, could you tell me:
           onChange={async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
-            // TODO: Resume upload handler
+
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("userId", userId);
+
+            try {
+              const res = await fetch("/api/vapi/resume", { method: "POST", body: formData });
+              const data = await res.json();
+              if (!data.success) throw new Error(data.error);
+
+              const { interviewId, questions, resumeImprovements } = data;
+              if (!interviewId) throw new Error("No interviewId returned from resume API");
+
+              setCurrentInterviewId(interviewId);
+
+              const formattedQuestions = (questions || []).map((q: string) => `- ${q}`).join("\n");
+
+              await vapi.start(interviewer, { variableValues: { questions: formattedQuestions } });
+
+              alert("✅ Resume analyzed! AI will now ask questions based on your resume.");
+            } catch (err) {
+              console.error("⚠ Resume upload failed:", err);
+              alert("Error analyzing resume. Please try again.");
+            }
           }}
         />
       </div>
+
       <div className="w-full flex justify-center gap-4 mt-6">
         <button className="btn-secondary" onClick={() => router.push("/")}>
           Back to Dashboard
         </button>
         {currentInterviewId && (
-          <button
-            className="btn-primary"
-            onClick={() => router.push(`/interview/${currentInterviewId}/feedback`)}
-          >
+          <button className="btn-primary" onClick={() => router.push(`/interview/${currentInterviewId}/feedback`)}>
             View Feedback
           </button>
         )}
