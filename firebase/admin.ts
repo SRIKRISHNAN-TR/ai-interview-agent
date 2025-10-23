@@ -20,12 +20,10 @@ function initFirebaseAdmin() {
     });
   }
 
-  const db = getFirestore();
-  const auth = getAuth();
-
-  db.settings({ ignoreUndefinedProperties: true });
-
-  return { auth, db };
+  return {
+    auth: getAuth(),
+    db: getFirestore(),
+  };
 }
 
 export const { auth, db } = initFirebaseAdmin();

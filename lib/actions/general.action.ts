@@ -28,12 +28,15 @@ type FirestoreTimestamp = {
   toMillis?: () => number;
 };
 
+// ✅ Updated Interview type with all the fields your UI uses
 type Interview = {
   id: string;
   userId: string;
   finalized: boolean;
-  createdAt?: FirestoreTimestamp | string | null; // ✅ Optional and safe
-  // ... other interview fields
+  role: string;
+  type: string;
+  techstack: string;
+  createdAt?: FirestoreTimestamp | string | null;
 };
 
 type Feedback = {
@@ -41,14 +44,17 @@ type Feedback = {
   interviewId: string;
   userId: string;
   totalScore: number;
-  // ... other feedback fields
+  categoryScores?: Record<string, number>;
+  strengths?: string[];
+  areasForImprovement?: string[];
+  finalAssessment?: string;
+  createdAt?: string;
 };
 
 // -------------------- Helper --------------------
 function getTimeValue(createdAt: any): number {
   if (!createdAt) return 0;
 
-  // ✅ Firestore Timestamp
   if (typeof createdAt === "object" && createdAt !== null && typeof createdAt.toMillis === "function") {
     try {
       return createdAt.toMillis();
@@ -57,16 +63,13 @@ function getTimeValue(createdAt: any): number {
     }
   }
 
-  // ✅ String or Date
   if (typeof createdAt === "string" || createdAt instanceof Date) {
     const t = new Date(createdAt).getTime();
     return isNaN(t) ? 0 : t;
   }
 
-  // ✅ Fallback
   return 0;
 }
-
 
 // -------------------- Feedback Creation --------------------
 export async function createFeedback(params: CreateFeedbackParams) {
@@ -82,9 +85,11 @@ export async function createFeedback(params: CreateFeedbackParams) {
       schema: feedbackSchema,
       prompt: `
         You are an AI interviewer analyzing a mock interview. Evaluate the candidate thoroughly.
+
         Transcript:
         ${formattedTranscript}
-        Score from 0 to 100 in the categories:
+
+        Score from 0 to 100 in:
         - Communication Skills
         - Technical Knowledge
         - Problem-Solving

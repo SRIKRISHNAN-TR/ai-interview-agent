@@ -332,3 +332,6 @@
     transform: translateY(0);
   }
 }
+.btn-upload {
+  @apply bg-indigo-600 text-white px-6 py-2 rounded-xl shadow-md hover:bg-indigo-700 transition;
+}
