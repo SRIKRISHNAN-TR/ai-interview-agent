@@ -21,6 +21,24 @@ async function Home() {
   const hasPastInterviews = userInterviews?.length! > 0;
   const hasUpcomingInterviews = allInterview?.length! > 0;
 
+  // 🔹 Safely normalize date (handles FirestoreTimestamp or string)
+  const normalizeDate = (dateValue: any): string | undefined => {
+    if (!dateValue) return undefined;
+    if (typeof dateValue === "string") return dateValue;
+    if (typeof dateValue.toDate === "function") {
+      return dateValue.toDate().toISOString();
+    }
+    return undefined;
+  };
+
+  // 🔹 Safely normalize techstack (always returns string[])
+  const normalizeTechstack = (tech: any): string[] => {
+    if (!tech) return [];
+    if (Array.isArray(tech)) return tech.filter((t) => typeof t === "string");
+    if (typeof tech === "string") return [tech];
+    return [];
+  };
+
   return (
     <>
       <section className="card-cta">
@@ -44,6 +62,7 @@ async function Home() {
         />
       </section>
 
+      {/* 🔹 Past Interviews Section */}
       <section className="flex flex-col gap-6 mt-8">
         <h2>Your Interviews</h2>
 
@@ -54,10 +73,10 @@ async function Home() {
                 key={interview.id}
                 userId={user?.id}
                 interviewId={interview.id}
-                role={interview.role}
-                type={interview.type}
-                techstack={interview.techstack}
-                createdAt={interview.createdAt}
+                role={interview.role ?? "Unknown Role"}
+                type={interview.type ?? "General"}
+                techstack={normalizeTechstack(interview.techstack)}
+                createdAt={normalizeDate(interview.createdAt)}
               />
             ))
           ) : (
@@ -66,6 +85,7 @@ async function Home() {
         </div>
       </section>
 
+      {/* 🔹 Available Interviews Section */}
       <section className="flex flex-col gap-6 mt-8">
         <h2>Take Interviews</h2>
 
@@ -76,10 +96,10 @@ async function Home() {
                 key={interview.id}
                 userId={user?.id}
                 interviewId={interview.id}
-                role={interview.role}
-                type={interview.type}
-                techstack={interview.techstack}
-                createdAt={interview.createdAt}
+                role={interview.role ?? "Unknown Role"}
+                type={interview.type ?? "General"}
+                techstack={normalizeTechstack(interview.techstack)}
+                createdAt={normalizeDate(interview.createdAt)}
               />
             ))
           ) : (
